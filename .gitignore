@@ -1,0 +1,15 @@
+/target
+/__pycache__
+/.vscode
+erroneousmover.py
+errustmover
+errustmover.rs
+log.txt
+rustmover.rs
+rustmover
+test.py
+warn.txt
+westmover.py
+southmover.py
+pyoutput.txt
+randommover.py
