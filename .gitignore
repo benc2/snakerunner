@@ -12,4 +12,5 @@ warn.txt
 westmover.py
 southmover.py
 pyoutput.txt
-randommover.py
+slowmover.py
+dumbrandommover.py
