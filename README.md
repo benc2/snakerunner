@@ -43,5 +43,5 @@ If you want to write your own script to play snake, it needs to communicate with
   
 Note that `stop` requires you to quit your script, while `out:{player}` indicates that another script has stopped. The latter requires no action from you, it just informs you that that particular snake will not move anymore. In both cases, the reason that the program has stopped could be anything, such as simply losing the game, the script crashing, timeout, invalid input, etc. 
 
-### Included
+## Included
 The `snakerunner` and `snakerunner.exe` files are compiled programs for unix and windows respectively. In your script, you will need to include your own model of the game. `randommover.py` has the class `TorusSnakeGame` as an example implementation (`unidirectionalmover.py` has the same one). In `src/main.rs`, the `TorusSnakeGame` struct and associated types and impls implement the game as well, should you want to write a Rust script.
