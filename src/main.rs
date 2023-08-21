@@ -585,7 +585,7 @@ enum Commands {
 #[derive(Args)]
 struct RunArgs {
     /// The names of the scripts you want to run. If the script name ends in .py, it will be run as a python file. Otherwise, it will be assumed to be a compiled executable.
-    #[arg(short, long, num_args(2..))]
+    #[arg(short, long, num_args(2..), required=true)]
     scripts: Vec<String>,
 
     /// Specify the starting positions of the players. Randomly assigned if not specified. Format: x and y coordinates separated by a comma with no space in between, and different positions separated by a space. E.g. snakerunner run -s a.py b.py -p 1,2 3,4
