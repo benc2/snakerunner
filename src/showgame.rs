@@ -16,7 +16,7 @@ enum ParseError {
     // MoveErr,
 }
 
-fn parse_usize_pair(input: &str) -> Result<(usize, usize)> {
+pub fn parse_usize_pair(input: &str) -> Result<(usize, usize)> {
     let parsed_args: Vec<usize> = input
         .split(",")
         .filter_map(|num_str| num_str.parse::<usize>().ok())

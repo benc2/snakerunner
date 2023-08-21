@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::fs::File;
 // use std::fmt::write;
 use std::io::{BufRead, BufReader, LineWriter, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
+use std::time::Duration;
 // use std::sync::{Arc, Mutex};
 use clap::{Args, Parser, Subcommand};
 use itertools::Itertools;
-use rand::Rng;
 use std::thread;
 mod showgame;
 use colored::Colorize;
@@ -267,12 +267,32 @@ fn trim_newline(s: &mut String) {
     }
 }
 
+fn write_to_player(
+    message: &str,
+    player: usize,
+    stdin: &mut ChildStdin,
+    sender: &mpsc::Sender<usize>,
+    alive_players: &mut HashSet<usize>,
+    verbose: bool,
+) {
+    if verbose {
+        println!("->p{player}  \"{message}\"")
+    }
+    stdin
+        .write_all(format!("{message}\n").as_bytes())
+        .unwrap_or_else(|_| {
+            alive_players.remove(&player);
+            let _ = sender.send(player); // Not much we can do if this fails
+        })
+}
+
 fn play_game(
     scripts: &Vec<String>,
     starting_config: Option<Vec<(usize, usize)>>,
     width: usize,
     height: usize,
     log_filename: &str,
+    verbose: bool,
 ) -> Option<usize> {
     // let scripts = vec!["westmover.py", "southmover.py", "randommover.py"];
 
@@ -309,27 +329,13 @@ fn play_game(
         .map(|child| child.stdin.take().expect("Child has no stdin"))
         .collect();
 
-    let mut readers: Vec<_> = children
+    let mut readers: Vec<BufReader<ChildStdout>> = children
         .iter_mut()
         .map(|child| BufReader::new(child.stdout.take().expect("Child has no stdout")))
         .collect();
 
     let (read_sender, read_receiver) = mpsc::channel();
     let (write_sender, write_receiver) = mpsc::channel(); // for now just used to kill child scripts
-
-    fn write_to_player(
-        message: &str,
-        player: usize,
-        stdin: &mut ChildStdin,
-        sender: &mpsc::Sender<usize>,
-        alive_players: &mut HashSet<usize>,
-    ) {
-        stdin
-            .write_all(format!("{message}\n").as_bytes())
-            .unwrap_or_else(|_| {
-                let _ = sender.send(player); // Not much we can do if this fails
-            })
-    }
 
     thread::spawn(move || {
         use Message::*;
@@ -354,6 +360,7 @@ fn play_game(
                             stdin,
                             &write_sender,
                             &mut alive_players,
+                            verbose,
                         );
                         println!("->p{opponent_player}  \"{}:{}\"", player, direction);
                     }
@@ -369,6 +376,7 @@ fn play_game(
                         &mut stdins[player],
                         &write_sender,
                         &mut alive_players,
+                        verbose,
                     );
                     println!("->p{player}  \"move\"");
                 }
@@ -378,13 +386,29 @@ fn play_game(
                     alive_players.remove(&player);
                     // stdins[player].write_all(b"dead\n").expect("Kill failed");
                     write_to_player(
-                        "dead",
+                        "stop",
                         player,
                         &mut stdins[player],
                         &write_sender,
                         &mut alive_players,
+                        verbose,
                     );
-                    println!("->p{player}  \"dead\"");
+                    println!("->p{player}  \"stop\"");
+
+                    for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
+                        if opponent_player == player || !alive_players.contains(&opponent_player) {
+                            continue;
+                        }
+                        write_to_player(
+                            &format!("out:{}", player),
+                            player,
+                            stdin,
+                            &write_sender,
+                            &mut alive_players,
+                            verbose,
+                        );
+                        println!("->p{opponent_player}  \"out:{}\"", player);
+                    }
                 }
 
                 SendHeader(header) => {
@@ -398,6 +422,7 @@ fn play_game(
                             stdin,
                             &write_sender,
                             &mut alive_players,
+                            verbose,
                         );
                         println!("->p{player} \"{header}\n{player}\"");
                     }
@@ -406,6 +431,17 @@ fn play_game(
             }
 
             // thread::sleep(Duration::from_millis(50));
+        }
+    });
+
+    let (listener_sender, listener_receiver) = mpsc::channel(); // determines which child the thread will try to read from
+    let (readline_sender, readline_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for player in listener_receiver {
+            let mut buffer = String::new();
+            let reader: &mut BufReader<ChildStdout> = &mut readers[player]; // why do we need type annotation?
+            let _ = reader.read_line(&mut buffer); //error handling? If it fails, it's probably players fault, so just return the empty buffer and let outer loop kill them
+            readline_sender.send(buffer).unwrap();
         }
     });
 
@@ -419,7 +455,7 @@ fn play_game(
 
     'mainloop: loop {
         println!("\nRemaining players: {:?}", alive_players);
-        for (player, reader) in readers.iter_mut().enumerate() {
+        for player in 0..n_players {
             // for player in write_receiver.iter() {
             //     // usually a broken player will still give an empty string in read_line, but do this just to be sure
             //     alive_players.remove(&player);
@@ -435,34 +471,63 @@ fn play_game(
                 continue;
             }
             read_sender.send(Message::AskMove(player)).unwrap();
-            let mut buffer = String::new();
-            match reader.read_line(&mut buffer) {
-                Ok(_) => {
-                    trim_newline(&mut buffer);
-                    println!("<-p{player}  \"{buffer}\"");
-                    match buffer.as_str().try_into() {
-                        Ok(direction) => {
-                            if !game.move_player(player, direction) {
-                                println!("Killing player {player} due to losing move");
-                                kill_player(player, &read_sender, &mut alive_players);
-                            }
-                            read_sender
-                                .send(Message::CommunicateMove { direction, player })
-                                .unwrap();
-                        }
-                        Err(_) => {
-                            // invalid move input from player
-                            println!("Killing player {player} due to invalid move");
-                            kill_player(player, &read_sender, &mut alive_players);
-                        }
-                    }
-                }
-                Err(err) => {
-                    // reading line failed (this should not happen)
-                    println!("{:?}", err);
+            listener_sender.send(player).unwrap();
+            let mut line = match readline_receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(line) => line,
+                Err(_) => {
+                    kill_player(player, &read_sender, &mut alive_players);
+                    let _ = children[player].kill(); // TODO: maybe remove if we have a good plan for when to kill processes
+                    println!("Killing player {player} due to timeout");
                     continue;
-                } // figure out what to do here, shouldn't happen anyway
+                }
+            };
+
+            trim_newline(&mut line);
+            println!("<-p{player}  \"{line}\"");
+            match line.as_str().try_into() {
+                Ok(direction) => {
+                    if !game.move_player(player, direction) {
+                        println!("Killing player {player} due to losing move");
+                        kill_player(player, &read_sender, &mut alive_players);
+                    }
+                    read_sender
+                        .send(Message::CommunicateMove { direction, player })
+                        .unwrap();
+                }
+                Err(_) => {
+                    // invalid move input from player
+                    println!("Killing player {player} due to invalid move");
+                    kill_player(player, &read_sender, &mut alive_players);
+                }
             }
+
+            // match reader.read_line(&mut buffer) {
+            //     Ok(_) => {
+            //         trim_newline(&mut buffer);
+            //         println!("<-p{player}  \"{buffer}\"");
+            //         match buffer.as_str().try_into() {
+            //             Ok(direction) => {
+            //                 if !game.move_player(player, direction) {
+            //                     println!("Killing player {player} due to losing move");
+            //                     kill_player(player, &read_sender, &mut alive_players);
+            //                 }
+            //                 read_sender
+            //                     .send(Message::CommunicateMove { direction, player })
+            //                     .unwrap();
+            //             }
+            //             Err(_) => {
+            //                 // invalid move input from player
+            //                 println!("Killing player {player} due to invalid move");
+            //                 kill_player(player, &read_sender, &mut alive_players);
+            //             }
+            //         }
+            //     }
+            //     Err(err) => {
+            //         // reading line failed (this should not happen)
+            //         println!("{:?}", err);
+            //         continue;
+            //     } // figure out what to do here, shouldn't happen anyway
+            // }
 
             // TODO: should we kill a process when we kill the player?
             // TODO: kill players when they do not accept input
@@ -505,14 +570,21 @@ struct RunArgs {
     #[arg(short, long, num_args(2..))]
     scripts: Vec<String>,
 
+    /// Specify the starting positions of the players. Randomly assigned if not specified. Format: x and y coordinates separated by a comma with no space in between, and different positions separated by a space. E.g. snakerunner run -s a.py b.py -p 1,2 3,4
     #[arg(short, long, num_args(2..))]
     positions: Option<Vec<String>>,
 
+    /// Width of the playing field
     #[arg(short = 'x', long, default_value_t = 10)]
     width: usize,
 
+    /// Height of the playing field
     #[arg(short = 'y', long, default_value_t = 10)]
     height: usize,
+
+    /// Print all inputs to and outputs from players, as well as the board at every move
+    #[arg(short, long, default_value_t = false)]
+    verbose: bool,
 
     /// Name of the output file to which the moves are logged
     #[arg(short, long)]
@@ -525,6 +597,7 @@ struct ShowArgs {
     #[arg(short, long)]
     input: Option<String>,
 
+    /// Timestep between moves in milliseconds
     #[arg(short, long, default_value_t = 500)]
     timestep: u64,
 }
@@ -533,12 +606,35 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(runargs) => {
+            let starting_config = match runargs.positions {
+                None => None,
+                Some(vector) => {
+                    if vector.len() != runargs.scripts.len() {
+                        println!("Incorrect number of starting positions");
+                        return;
+                    }
+                    let mut starting_coords = Vec::new();
+                    for coords_str in vector {
+                        match showgame::parse_usize_pair(&coords_str) {
+                            Ok(coords) => {
+                                starting_coords.push(coords);
+                            }
+                            Err(_) => {
+                                println!("Could not parse coordinates");
+                                return;
+                            }
+                        }
+                    }
+                    Some(starting_coords)
+                }
+            };
             play_game(
                 &runargs.scripts,
-                None,
+                starting_config,
                 runargs.width,
                 runargs.height,
                 &runargs.output.unwrap_or("log.txt".into()),
+                runargs.verbose,
             );
         }
         Commands::Show(showargs) => {
