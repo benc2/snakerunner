@@ -2,7 +2,7 @@
 A command line tool for running a competitive game of snake with looping edges between scripts through an I/O interface with the `run` command. The `show` command plays a stored in the terminal.
 
 ## Command line tool
-- `snakerunner run -s <SCRIPTS>`. Runs a game of Snake on a Torus between the scripts. See `snakerunner run -h` for more details and settings.
+- `snakerunner run -s <SCRIPTS>`. Runs a game of Snake on a Torus between the scripts. See `snakerunner run -h` for more details and settings. Scripts ending in `.py` will be run as python scripts, anything else will be assumed to be an executable.
 - `snakerunner show`. Plays a stored game from a log file in the terminal. See `snakerunner show -h` for more details and settings.
 
 
@@ -42,3 +42,6 @@ If you want to write your own script to play snake, it needs to communicate with
 - `out:{player}`: player is out of the game.
   
 Note that `stop` requires you to quit your script, while `out:{player}` indicates that another script has stopped. The latter requires no action from you, it just informs you that that particular snake will not move anymore. In both cases, the reason that the program has stopped could be anything, such as simply losing the game, the script crashing, timeout, invalid input, etc. 
+
+### Included
+The `snakerunner` and `snakerunner.exe` files are compiled programs for unix and windows respectively. In your script, you will need to include your own model of the game. `randommover.py` has the class `TorusSnakeGame` as an example implementation (`unidirectionalmover.py` has the same one). In `src/main.rs`, the `TorusSnakeGame` struct and associated types and impls implement the game as well, should you want to write a Rust script.
