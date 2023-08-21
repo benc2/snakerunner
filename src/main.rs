@@ -362,7 +362,7 @@ fn play_game(
                             &mut alive_players,
                             verbose,
                         );
-                        println!("->p{opponent_player}  \"{}:{}\"", player, direction);
+                        // println!("->p{opponent_player}  \"{}:{}\"", player, direction);
                     }
                 }
 
@@ -378,7 +378,7 @@ fn play_game(
                         &mut alive_players,
                         verbose,
                     );
-                    println!("->p{player}  \"move\"");
+                    // println!("->p{player}  \"move\"");
                 }
 
                 Kill(player) => {
@@ -393,7 +393,7 @@ fn play_game(
                         &mut alive_players,
                         verbose,
                     );
-                    println!("->p{player}  \"stop\"");
+                    // println!("->p{player}  \"stop\"");
 
                     for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
                         if opponent_player == player || !alive_players.contains(&opponent_player) {
@@ -407,7 +407,7 @@ fn play_game(
                             &mut alive_players,
                             verbose,
                         );
-                        println!("->p{opponent_player}  \"out:{}\"", player);
+                        // println!("->p{opponent_player}  \"out:{}\"", player);
                     }
                 }
 
@@ -424,7 +424,7 @@ fn play_game(
                             &mut alive_players,
                             verbose,
                         );
-                        println!("->p{player} \"{header}\n{player}\"");
+                        // println!("->p{player} \"{header}\n{player}\"");
                     }
                     writer.write_fmt(format_args!("{header}\n")).unwrap();
                 }
@@ -448,13 +448,17 @@ fn play_game(
     // let mut attempts = 0;
     let mut alive_players: HashSet<usize> = (0..n_players).collect();
 
-    println!("{}", game.setup_string());
+    if verbose {
+        println!("{}", game.setup_string());
+    }
     read_sender
         .send(Message::SendHeader(game.setup_string()))
         .unwrap();
 
     'mainloop: loop {
-        println!("\nRemaining players: {:?}", alive_players);
+        if verbose {
+            println!("\nRemaining players: {:?}", alive_players);
+        }
         for player in 0..n_players {
             // for player in write_receiver.iter() {
             //     // usually a broken player will still give an empty string in read_line, but do this just to be sure
@@ -463,7 +467,9 @@ fn play_game(
             // }
             if alive_players.len() < 2 {
                 // need to check here, since game can end after any move
-                println!("done");
+                if verbose {
+                    println!("done");
+                }
                 break 'mainloop;
             }
 
@@ -477,17 +483,23 @@ fn play_game(
                 Err(_) => {
                     kill_player(player, &read_sender, &mut alive_players);
                     let _ = children[player].kill(); // TODO: maybe remove if we have a good plan for when to kill processes
-                    println!("Killing player {player} due to timeout");
+                    if verbose {
+                        println!("Killing player {player} due to timeout");
+                    }
                     continue;
                 }
             };
 
             trim_newline(&mut line);
-            println!("<-p{player}  \"{line}\"");
+            if verbose {
+                println!("<-p{player}  \"{line}\"");
+            }
             match line.as_str().try_into() {
                 Ok(direction) => {
                     if !game.move_player(player, direction) {
-                        println!("Killing player {player} due to losing move");
+                        if verbose {
+                            println!("Killing player {player} due to losing move");
+                        }
                         kill_player(player, &read_sender, &mut alive_players);
                     }
                     read_sender
@@ -496,7 +508,9 @@ fn play_game(
                 }
                 Err(_) => {
                     // invalid move input from player
-                    println!("Killing player {player} due to invalid move");
+                    if verbose {
+                        println!("Killing player {player} due to invalid move");
+                    }
                     kill_player(player, &read_sender, &mut alive_players);
                 }
             }
@@ -533,7 +547,9 @@ fn play_game(
             // TODO: kill players when they do not accept input
             // TODO: add time limit for players
 
-            println!("{}", game);
+            if verbose {
+                println!("{}", game);
+            }
         }
     }
     // println!("{:?}", kill_list);
@@ -542,7 +558,9 @@ fn play_game(
         let _ = children[i].kill();
         if alive_players.contains(&i) {
             // kill_player(i, &read_sender, &mut alive_players); // kill winner. Not necessary if we kill the processes
-            println!("Player {i} won!");
+            if verbose {
+                println!("Player {i} won!");
+            }
             return Some(i);
         }
     }
