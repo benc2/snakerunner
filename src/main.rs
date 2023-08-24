@@ -14,6 +14,8 @@ mod parse_instruction;
 mod showgame;
 
 use rand::distributions::{Distribution, Uniform};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 mod game;
 use game::{Direction, TorusSnakeGame};
 
@@ -60,15 +62,6 @@ fn make_process(filename: &str) -> Child {
     // }
 }
 
-fn trim_newline(s: &mut String) {
-    if s.ends_with('\n') {
-        s.pop();
-        if s.ends_with('\r') {
-            s.pop();
-        }
-    }
-}
-
 fn write_to_player(
     message: &str,
     player: usize,
@@ -97,7 +90,7 @@ fn log(message: &str, writer_opt: &mut Option<LineWriter<File>>) -> Result<(), s
 }
 
 fn play_game(
-    scripts: &Vec<String>,
+    scripts: &Vec<&str>,
     starting_config: Option<Vec<(usize, usize)>>,
     width: usize,
     height: usize,
@@ -339,54 +332,92 @@ fn play_game(
         let _ = children[i].kill();
         if alive_players.contains(&i) {
             // kill_player(i, &read_sender, &mut alive_players); // kill winner. Not necessary if we kill the processes
-            println!("Player {i} won!");
             return Some(i);
         }
     }
     None
 }
 
+fn log_summary(writer: &mut LineWriter<File>, wins: Vec<i32>) -> Result<(), std::io::Error> {
+    let n_games: i32 = wins.iter().sum();
+    writer.write_fmt(format_args!("n_games:{n_games}\n"))?;
+    for (pn, p_wins) in wins.iter().enumerate() {
+        writer.write_fmt(format_args!("{pn}:{p_wins}\n"))?
+    }
+    let winner = wins
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, &value)| value)
+        .map(|(idx, _)| idx)
+        .unwrap(); // argmax
+
+    writer.write_fmt(format_args!("winner:{winner}\n"))?;
+
+    Ok(())
+}
+
 fn play_match(
-    scripts: Vec<String>,
+    scripts: Vec<&str>,
     width: usize,
     height: usize,
-    log_filename: Option<&str>,
+    log_filename: &str,
     n_games: usize,
 ) -> usize {
+    let mut logwriter = LineWriter::new(File::create(log_filename).unwrap());
     let mut wins = vec![0; scripts.len()];
-    for i in 0..n_games {
-        if let Some(winner) = play_game(&scripts, None, width, height, None, false) {
-            wins[i] += 1;
-        }
-    }
+    let mut tagged_scripts: Vec<(usize, &str)> = scripts.into_iter().enumerate().collect();
 
-    let mut candidates: HashSet<usize>;
-    let mut candidate_scripts: Vec<String>;
-    loop {
-        let max_wins = wins.iter().max().unwrap();
-
-        candidate_scripts = wins
+    let mut shuffled_players: Vec<usize>;
+    let mut shuffled_scripts: Vec<&str>;
+    for _ in 0..n_games {
+        tagged_scripts.shuffle(&mut thread_rng());
+        (shuffled_players, shuffled_scripts) = tagged_scripts
             .iter()
-            .zip(scripts.iter())
-            .filter(|(n_wins, _)| *n_wins == max_wins)
-            .map(|(_, script)| script.clone())
-            .collect();
-        if candidate_scripts.len() < 2 {
-            break;
-        }
-        // candidate_scripts = scripts
-        //     .iter()
-        //     .enumerate()
-        //     .filter(|(player, script)| candidates.contains(player))
-        //     .map(|(_, script)| script.clone())
-        //     .collect();
+            .map(|(n, script)| (n, *script))
+            .unzip();
 
-        if let Some(winner) = play_game(&candidate_scripts, None, width, height, None, false) {
-            wins[winner] += 1;
+        if let Some(winner) = play_game(&shuffled_scripts, None, width, height, None, false) {
+            wins[shuffled_players[winner]] += 1;
         }
     }
-    // *candidates.iter().next().unwrap()
-    1
+
+    // let mut candidates: HashSet<usize>;
+    // let mut candidate_scripts: Vec<String>;
+    let max_wins = *wins.iter().max().unwrap();
+    // TODO: Error handling: make sure scripts.len != 0
+
+    tagged_scripts = tagged_scripts
+        .into_iter()
+        .filter(|(pn, _)| wins[*pn] == max_wins)
+        .collect(); // filter only tied winning players
+
+    if tagged_scripts.len() == 0 {
+        panic!("") // TODO: handle error. Can only occur if scripts.len() == 0
+    }
+    if let [(pn, _)] = tagged_scripts[..] {
+        log_summary(&mut logwriter, wins).unwrap();
+        return pn;
+    } // length 1 => return
+
+    // 2 or more tied players: tiebreaker
+    for _ in 0..10 {
+        // should only occur once,
+        // but if play_game fails, might have to redo
+        // 10 should be a safe margin
+        tagged_scripts.shuffle(&mut thread_rng());
+        (shuffled_players, shuffled_scripts) = tagged_scripts
+            .iter()
+            .map(|(n, script)| (n, *script))
+            .unzip();
+
+        if let Some(winner) = play_game(&shuffled_scripts, None, width, height, None, false) {
+            wins[shuffled_players[winner]] += 1;
+            log_summary(&mut logwriter, wins).unwrap();
+            return shuffled_players[winner];
+        };
+    }
+
+    tagged_scripts[0].0 // failsafe
 }
 
 #[derive(Parser)]
@@ -398,10 +429,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Runs a game between given scripts once and logs the moves to a file
+    /// Runs a game between given scripts once and outputs the winner. Logs all moves to a file
     Run(RunArgs),
     /// Shows a game from a log file in the terminal
     Show(ShowArgs),
+    /// Plays a match consisting of multiple games and outputs which script won most games. Plays a tiebreaker if necessary. Starting positions and the order in which the scripts play is randomized for each game.
+    Match(MatchArgs),
 }
 
 #[derive(Args)]
@@ -426,7 +459,7 @@ struct RunArgs {
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 
-    /// Name of the output file to which the moves are logged
+    /// Name of the output file to which the moves are logged. Default: log.txt
     #[arg(short, long)]
     output: Option<String>,
 }
@@ -442,10 +475,33 @@ struct ShowArgs {
     timestep: u64,
 }
 
+#[derive(Args)]
+struct MatchArgs {
+    /// The names of the scripts you want to run. If the script name ends in .py, it will be run as a python file. Otherwise, it will be assumed to be a compiled executable.
+    #[arg(short, long, num_args(2..), required=true)]
+    scripts: Vec<String>,
+
+    /// Width of the playing field
+    #[arg(short = 'x', long, default_value_t = 10)]
+    width: usize,
+
+    /// Height of the playing field
+    #[arg(short = 'y', long, default_value_t = 10)]
+    height: usize,
+
+    #[arg(short, long)]
+    n_games: usize,
+
+    /// Name of the output file to which the moves are logged. Default: summary.txt
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
 fn main() {
     let cli = Cli::parse();
     match cli.command {
         Commands::Run(runargs) => {
+            // parse starting positions
             let starting_config = match runargs.positions {
                 None => None,
                 Some(vector) => {
@@ -468,14 +524,22 @@ fn main() {
                     Some(starting_coords)
                 }
             };
-            play_game(
-                &runargs.scripts,
+
+            // play the game!
+            if let Some(winner) = play_game(
+                &runargs.scripts.iter().map(String::as_str).collect(),
                 starting_config,
                 runargs.width,
                 runargs.height,
                 Some(&runargs.output.unwrap_or("log.txt".into())),
                 runargs.verbose,
-            );
+            ) {
+                println!("Player {winner} won!");
+            } else {
+                println!(
+                    "Error caused all remaining players to quit before winner could be determined"
+                );
+            };
         }
         Commands::Show(showargs) => {
             showgame::showgame(
@@ -483,6 +547,16 @@ fn main() {
                 showargs.timestep,
             )
             .unwrap();
+        }
+        Commands::Match(matchargs) => {
+            let winner = play_match(
+                matchargs.scripts.iter().map(String::as_str).collect(),
+                matchargs.width,
+                matchargs.height,
+                &matchargs.output.unwrap_or("summary.txt".to_owned()),
+                matchargs.n_games,
+            );
+            println!("Player {winner} won the match!");
         }
     }
 }

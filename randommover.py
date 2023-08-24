@@ -74,7 +74,6 @@ my_player_number = int(input())
 game = TorusSnakeGame(width, height, starting_positions)
 directions = ["N", "S", "E", "W"]
 while True:
-    print(repr(game))
     instruction = input()
     if instruction == "stop":
         break
