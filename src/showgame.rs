@@ -6,6 +6,7 @@ use anyhow::Result;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 // use std::path::Path;
+use crate::parse_instruction::Instruction;
 use std::time::Duration;
 
 #[derive(Debug, PartialEq, thiserror::Error)]
@@ -29,10 +30,10 @@ pub fn parse_usize_pair(input: &str) -> Result<(usize, usize)> {
     Ok((x, y))
 }
 
-fn parse_player_move(input: &str) -> Result<(usize, Direction)> {
+pub fn parse_player_move(input: &str) -> Result<(usize, Direction)> {
     let mut args = input.split(":");
     let player: usize = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
-    let direction: Direction = args.next().ok_or(ParseError::ArgNoErr)?.try_into()?;
+    let direction: Direction = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
     Ok((player, direction))
 }
 
@@ -49,22 +50,27 @@ pub fn showgame(logfile: &str, timestep: u64) -> Result<()> {
         .collect();
 
     let mut game = TorusSnakeGame::new(width, height, starting_positions);
-    // print!("{}", term_cursor::Clear);
-    // print!("{}", "\n".to_owned().repeat(height + 5));
+
     for line_result in lines {
-        if let Ok(line) = line_result {
-            let (player, direction) = parse_player_move(&line)?;
-            game.move_player(player, direction);
-            println!("\n{player}:{direction}");
-            println!("{}", game);
-            std::thread::sleep(Duration::from_millis(timestep));
-            // clear_lines(n_players + 1);
-            print!("{}", term_cursor::Up(height as i32 + 4)); // move cursor up to overwrite previous board
-                                                              // print!("{}\r", "\x1B[F".to_owned().repeat(height + 4))
-                                                              // print!("\x1B[{}A\r", height + 4)
+        let Ok(line) = line_result else{continue;};
+        use Instruction::*;
+        match line.parse::<Instruction>()? {
+            Move { player, direction } => {
+                game.move_player(player, direction);
+
+                println!("\n{player}:{direction}");
+                println!("{}", game);
+                std::thread::sleep(Duration::from_millis(timestep));
+                // clear_lines(n_players + 1);
+                print!("{}", term_cursor::Up(height as i32 + 4)); // move cursor up to overwrite previous board
+                                                                  // print!("{}\r", "\x1B[F".to_owned().repeat(height + 4))
+                                                                  // print!("\x1B[{}A\r", height + 4)
+            }
+            _ => continue,
         }
     }
-    print!("{}", term_cursor::Down(height as i32 + 4));
-    println!();
+
+    print!("{}", term_cursor::Down(height as i32 + 4)); // set cursor to below board when we're done
+    println!(); // extra clear line for aesthetics
     Ok(())
 }

@@ -15,3 +15,5 @@ pyoutput.txt
 slowmover.py
 dumbrandommover.py
 build.sh
+debugbuild.sh
+custommover.py

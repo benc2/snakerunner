@@ -1,5 +1,8 @@
 import random
 
+# randommover chooses a random direction to move in, avoiding any directions that would cause it to die (unless there is no other option)
+
+# class to keep track of game state
 class TorusSnakeGame:
     direction_to_coord_shift = {"N": (0,-1), "S": (0,1), "E": (1,0), "W": (-1,0)}
     def __init__(self,width, height, starting_positions):
@@ -36,6 +39,8 @@ class TorusSnakeGame:
         return False
     
     def display_cell(self, x, y):
+        """For pretty printing a cell, mainly a helper function for __str__. If the cell contains a snake, returns the player number, formatted to be colored and bold if it's the head of the snake.
+        Empty cells are displayed as dots"""
         if self.get_cell(x,y) == -1:
             return "·"
 
@@ -51,8 +56,13 @@ class TorusSnakeGame:
     def __str__(self):
         return "\n".join(["".join([self.display_cell(x,y) for x in range(self.width)]) for y in range(self.height)])
     
+    def __repr__(self):
+        boardrepr = "\n\t\t".join(["".join(["." if p==-1 else str(p) for p in row]) for row in self.board])
+        return f"TorusSnakeGame(width={self.width}, height={self.height}, n_players={self.n_players},\n\t\thead_positions={self.head_positions},\n\t\talive_players={self.alive_players},\n\t\tboard:\n\t\t{boardrepr})"
+    
 
 
+# parsing header
 width, height = [int(s) for s in input().split(",")] # width and height of board
 n_players = int(input()) # number of players
 starting_positions = []
@@ -60,15 +70,16 @@ for i in range(n_players):
     starting_positions.append(tuple(int(s) for s in input().split(",")))
 my_player_number = int(input())
 
-
+# playing the game
 game = TorusSnakeGame(width, height, starting_positions)
 directions = ["N", "S", "E", "W"]
 while True:
+    print(repr(game))
     instruction = input()
     if instruction == "stop":
         break
     elif instruction == "move":
-        random.shuffle(directions)
+        random.shuffle(directions)  # go through moves in random order
         for direction in directions:
             if game.move_player(my_player_number, direction): # check if move doesn't lose (executes move too)
                 print(direction)

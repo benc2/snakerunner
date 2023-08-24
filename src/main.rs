@@ -1,76 +1,22 @@
 use std::collections::HashSet;
 use std::fs::File;
 // use std::fmt::write;
+use anyhow::Result;
 use std::io::{BufRead, BufReader, LineWriter, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 // use std::sync::{Arc, Mutex};
 use clap::{Args, Parser, Subcommand};
-use itertools::Itertools;
+
 use std::thread;
+mod parse_instruction;
 mod showgame;
-use colored::Colorize;
+
 use rand::distributions::{Distribution, Uniform};
+mod game;
+use game::{Direction, TorusSnakeGame};
 
-#[derive(Clone, Copy)]
-enum Direction {
-    North,
-    South,
-    East,
-    West,
-}
-
-impl Direction {
-    fn coord_shift(&self) -> (i32, i32) {
-        match self {
-            Self::North => (0, -1),
-            Self::South => (0, 1),
-            Self::East => (1, 0),
-            Self::West => (-1, 0),
-        }
-    }
-}
-
-impl Into<String> for Direction {
-    fn into(self) -> String {
-        match self {
-            Self::North => "N",
-            Self::South => "S",
-            Self::East => "E",
-            Self::West => "W",
-        }
-        .into()
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("Could not be parsed to direction")]
-struct InvalidDirection;
-
-impl std::convert::TryFrom<&str> for Direction {
-    type Error = InvalidDirection;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if let Some(char) = value.chars().next() {
-            match char {
-                'N' => Ok(Self::North),
-                'S' => Ok(Self::South),
-                'E' => Ok(Self::East),
-                'W' => Ok(Self::West),
-                _ => Err(InvalidDirection {}),
-            }
-        } else {
-            Err(InvalidDirection)
-        }
-    }
-}
-
-impl std::fmt::Display for Direction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", Into::<String>::into(*self))
-    }
-}
 enum Message {
     CommunicateMove { direction: Direction, player: usize },
     AskMove(usize), // ask player to move
@@ -114,150 +60,6 @@ fn make_process(filename: &str) -> Child {
     // }
 }
 
-struct TorusSnakeGame {
-    board: Vec<Vec<Option<usize>>>,
-    height: usize,
-    width: usize,
-    head_positions: Vec<(usize, usize)>,
-    alive_players: HashSet<usize>,
-}
-
-impl TorusSnakeGame {
-    fn new(width: usize, height: usize, starting_positions: Vec<(usize, usize)>) -> Self {
-        let mut board = vec![vec![None; width]; height];
-        for (player_num, (x, y)) in starting_positions.iter().enumerate() {
-            board[*y][*x] = Some(player_num);
-        }
-        let n_players = starting_positions.len();
-        Self {
-            board,
-            height,
-            width,
-            head_positions: starting_positions,
-            alive_players: (0..n_players).collect(),
-        }
-    }
-
-    fn shift_coords(&self, (x, y): (usize, usize), direction: Direction) -> (usize, usize) {
-        let (dx, dy) = direction.coord_shift();
-        let new_x = ((x + self.width) as i32 + dx) as usize % self.width;
-        let new_y = ((y + self.height) as i32 + dy) as usize % self.height;
-        (new_x, new_y)
-    }
-
-    fn get(&self, (x, y): (usize, usize)) -> Option<usize> {
-        self.board[y][x]
-    }
-
-    // fn clear(&mut self, (x, y): (usize, usize)) {
-    //     self.board[y][x] = None;
-    // }
-
-    fn set_player(&mut self, (x, y): (usize, usize), player: usize) {
-        self.board[y][x] = Some(player);
-    }
-
-    fn move_player(&mut self, player: usize, direction: Direction) -> bool {
-        let new_pos = self.shift_coords(self.head_positions[player], direction);
-        if self.get(new_pos).is_none() {
-            self.head_positions[player] = new_pos;
-            self.set_player(new_pos, player);
-            true
-        } else {
-            self.alive_players.remove(&player);
-            false
-        }
-    }
-
-    fn display_cell(&self, pos: (usize, usize)) -> String {
-        if let Some(player) = self.get(pos) {
-            let disp = player.to_string();
-            if self.head_positions[player] != pos {
-                return disp;
-            }
-            let mut disp = disp.bold();
-            if self.alive_players.contains(&player) {
-                disp = disp.green()
-            } else {
-                disp = disp.red()
-            }
-            format!("{}", disp)
-        } else {
-            "·".into()
-        }
-    }
-
-    #[allow(unstable_name_collisions)] // intersperse will be added to std, but change is probably not breaking
-    fn setup_string(&self) -> String {
-        format!(
-            "{},{}\n{}\n{}",
-            self.width,
-            self.height,
-            self.head_positions.len(),
-            self.head_positions
-                .iter()
-                .map(|(x, y)| format!("{x},{y}"))
-                .intersperse("\n".to_owned())
-                .collect::<String>()
-        )
-    }
-}
-
-// fn display_cell(content: &Option<usize>, bold: bool) -> String {
-//     let disp = if let Some(player) = content {
-//         player.to_string()
-//     } else {
-//         "·".into()
-//     };
-//     if bold {
-//         // format!("\x1b[1m{}\x1b[0m", disp)
-//         format!("{}", disp.red().bold())
-//     } else {
-//         disp
-//     }
-// }
-
-impl std::fmt::Display for TorusSnakeGame {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let horizontal_border = format!("+{}+", "-".to_owned().repeat(self.width));
-        write!(
-            f,
-            "{}\n{}{}",
-            horizontal_border.clone(),
-            (0..self.height)
-                .map(|y| format!(
-                    "|{}|\n",
-                    (0..self.width)
-                        .map(|x| self.display_cell((x, y)))
-                        .collect::<String>()
-                ))
-                .collect::<String>(),
-            // self.board
-            //     .iter()
-            //     .enumerate()
-            //     .map(|(y, row)| format!(
-            //         "|{}|\n",
-            //         row.iter()
-            //             .enumerate()
-            //             .map(|(x, cell_content)| { self.display_cell((x, y)) })
-            //             .collect::<String>()
-            //     ))
-            //     .collect::<String>(),
-            horizontal_border
-        )
-    }
-}
-
-// fn main() {
-//     let mut game = TorusSnakeGame::new(10, 10, vec![(0, 0), (6, 2), (6, 8)]);
-
-//     for i in 0..7 {
-//         if !game.move_player(2, Direction::South) {
-//             {}
-//         }
-//     }
-//     println!("{}", game);
-// }
 fn trim_newline(s: &mut String) {
     if s.ends_with('\n') {
         s.pop();
@@ -282,8 +84,16 @@ fn write_to_player(
         .write_all(format!("{message}\n").as_bytes())
         .unwrap_or_else(|_| {
             alive_players.remove(&player);
-            let _ = sender.send(player); // Not much we can do if this fails
+            // let _ = sender.send(player); // Not much we can do if this fails
         })
+}
+
+fn log(message: &str, writer_opt: &mut Option<LineWriter<File>>) -> Result<(), std::io::Error> {
+    if let Some(writer) = writer_opt {
+        writer.write_fmt(format_args!("{message}\n"))
+    } else {
+        Ok(())
+    }
 }
 
 fn play_game(
@@ -291,13 +101,11 @@ fn play_game(
     starting_config: Option<Vec<(usize, usize)>>,
     width: usize,
     height: usize,
-    log_filename: &str,
+    log_filename: Option<&str>,
     verbose: bool,
 ) -> Option<usize> {
-    // let scripts = vec!["westmover.py", "southmover.py", "randommover.py"];
-
-    let logfile = File::create(log_filename).unwrap();
-    let mut writer = LineWriter::new(logfile);
+    let logfile = log_filename.map(|filename| File::create(filename).unwrap());
+    let mut writer = logfile.map(LineWriter::new);
 
     let n_players = scripts.len();
 
@@ -344,19 +152,16 @@ fn play_game(
         for message in read_receiver.iter() {
             match message {
                 CommunicateMove { direction, player } => {
-                    writer
-                        .write_fmt(format_args!("{player}:{direction}\n"))
-                        .unwrap();
+                    log(&format!("{player}:{direction}"), &mut writer).unwrap();
+
                     for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
                         if opponent_player == player || !alive_players.contains(&opponent_player) {
                             continue;
                         }
-                        // stdin
-                        //     .write_all(format!("{}:{}\n", player, direction).as_bytes())
-                        //     .expect("Writing move failed");
+
                         write_to_player(
                             &format!("{}:{}", player, direction),
-                            player,
+                            opponent_player,
                             stdin,
                             &write_sender,
                             &mut alive_players,
@@ -383,6 +188,7 @@ fn play_game(
 
                 Kill(player) => {
                     // println!("Gotta kill {player}");
+                    // writer.write_fmt(format_args!("out:{player}\n")).unwrap(); // TODO: fix parsing in showgame.rs to support this
                     alive_players.remove(&player);
                     // stdins[player].write_all(b"dead\n").expect("Kill failed");
                     write_to_player(
@@ -399,9 +205,10 @@ fn play_game(
                         if opponent_player == player || !alive_players.contains(&opponent_player) {
                             continue;
                         }
+
                         write_to_player(
                             &format!("out:{}", player),
-                            player,
+                            opponent_player,
                             stdin,
                             &write_sender,
                             &mut alive_players,
@@ -426,7 +233,8 @@ fn play_game(
                         );
                         // println!("->p{player} \"{header}\n{player}\"");
                     }
-                    writer.write_fmt(format_args!("{header}\n")).unwrap();
+                    // writer.write_fmt(format_args!("{header}\n")).unwrap();
+                    log(&header, &mut writer).unwrap();
                 }
             }
 
@@ -478,7 +286,7 @@ fn play_game(
             }
             read_sender.send(Message::AskMove(player)).unwrap();
             listener_sender.send(player).unwrap();
-            let mut line = match readline_receiver.recv_timeout(Duration::from_millis(100)) {
+            let line = match readline_receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(line) => line,
                 Err(_) => {
                     kill_player(player, &read_sender, &mut alive_players);
@@ -489,12 +297,13 @@ fn play_game(
                     continue;
                 }
             };
+            // .to_owned();
 
-            trim_newline(&mut line);
+            // trim_newline(&mut line);
             if verbose {
-                println!("<-p{player}  \"{line}\"");
+                println!("<-p{player}  \"{}\"", line.trim());
             }
-            match line.as_str().try_into() {
+            match line.trim().parse() {
                 Ok(direction) => {
                     if !game.move_player(player, direction) {
                         if verbose {
@@ -515,34 +324,6 @@ fn play_game(
                 }
             }
 
-            // match reader.read_line(&mut buffer) {
-            //     Ok(_) => {
-            //         trim_newline(&mut buffer);
-            //         println!("<-p{player}  \"{buffer}\"");
-            //         match buffer.as_str().try_into() {
-            //             Ok(direction) => {
-            //                 if !game.move_player(player, direction) {
-            //                     println!("Killing player {player} due to losing move");
-            //                     kill_player(player, &read_sender, &mut alive_players);
-            //                 }
-            //                 read_sender
-            //                     .send(Message::CommunicateMove { direction, player })
-            //                     .unwrap();
-            //             }
-            //             Err(_) => {
-            //                 // invalid move input from player
-            //                 println!("Killing player {player} due to invalid move");
-            //                 kill_player(player, &read_sender, &mut alive_players);
-            //             }
-            //         }
-            //     }
-            //     Err(err) => {
-            //         // reading line failed (this should not happen)
-            //         println!("{:?}", err);
-            //         continue;
-            //     } // figure out what to do here, shouldn't happen anyway
-            // }
-
             // TODO: should we kill a process when we kill the player?
             // TODO: kill players when they do not accept input
             // TODO: add time limit for players
@@ -558,13 +339,54 @@ fn play_game(
         let _ = children[i].kill();
         if alive_players.contains(&i) {
             // kill_player(i, &read_sender, &mut alive_players); // kill winner. Not necessary if we kill the processes
-            if verbose {
-                println!("Player {i} won!");
-            }
+            println!("Player {i} won!");
             return Some(i);
         }
     }
     None
+}
+
+fn play_match(
+    scripts: Vec<String>,
+    width: usize,
+    height: usize,
+    log_filename: Option<&str>,
+    n_games: usize,
+) -> usize {
+    let mut wins = vec![0; scripts.len()];
+    for i in 0..n_games {
+        if let Some(winner) = play_game(&scripts, None, width, height, None, false) {
+            wins[i] += 1;
+        }
+    }
+
+    let mut candidates: HashSet<usize>;
+    let mut candidate_scripts: Vec<String>;
+    loop {
+        let max_wins = wins.iter().max().unwrap();
+
+        candidate_scripts = wins
+            .iter()
+            .zip(scripts.iter())
+            .filter(|(n_wins, _)| *n_wins == max_wins)
+            .map(|(_, script)| script.clone())
+            .collect();
+        if candidate_scripts.len() < 2 {
+            break;
+        }
+        // candidate_scripts = scripts
+        //     .iter()
+        //     .enumerate()
+        //     .filter(|(player, script)| candidates.contains(player))
+        //     .map(|(_, script)| script.clone())
+        //     .collect();
+
+        if let Some(winner) = play_game(&candidate_scripts, None, width, height, None, false) {
+            wins[winner] += 1;
+        }
+    }
+    // *candidates.iter().next().unwrap()
+    1
 }
 
 #[derive(Parser)]
@@ -651,7 +473,7 @@ fn main() {
                 starting_config,
                 runargs.width,
                 runargs.height,
-                &runargs.output.unwrap_or("log.txt".into()),
+                Some(&runargs.output.unwrap_or("log.txt".into())),
                 runargs.verbose,
             );
         }
