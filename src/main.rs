@@ -459,7 +459,7 @@ struct RunArgs {
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
 
-    /// Name of the output file to which the moves are logged. Default: log.txt
+    /// Name of the output file to which the moves are logged [default: log.txt]
     #[arg(short, long)]
     output: Option<String>,
 }
@@ -489,10 +489,11 @@ struct MatchArgs {
     #[arg(short = 'y', long, default_value_t = 10)]
     height: usize,
 
+    /// Number of games to be played. A tiebreaker may be played, so actual amount of games played might be 1 higher
     #[arg(short, long)]
     n_games: usize,
 
-    /// Name of the output file to which the moves are logged. Default: summary.txt
+    /// Name of the output file to which the moves are logged [default: summary.txt]
     #[arg(short, long)]
     output: Option<String>,
 }
