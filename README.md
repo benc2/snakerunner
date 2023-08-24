@@ -4,12 +4,17 @@ A command line tool for running a competitive game of snake with looping edges b
 ## Command line tool
 - `snakerunner run -s <SCRIPTS>`. Runs a game of Snake on a Torus between the scripts. See `snakerunner run -h` for more details and settings. Scripts ending in `.py` will be run as python scripts, anything else will be assumed to be an executable.
 - `snakerunner show`. Plays a stored game from a log file in the terminal. See `snakerunner show -h` for more details and settings.
+- `snakerunner match -s <SCRIPTS> -n <N_GAMES>`. Runs `N-GAMES` games with starting positions and move order being randomized each time. Plays a tiebreaker if necessary.  See `snakerunner match -h` for more details and settings.
 
 
-## Example
-Run `snakerunner run -s unidirectionalmover.py randommover.py`. This runs a game between the two scripts and logs the moves to `log.txt`. 
+## Examples
+### Run and view a game
+Run `snakerunner run -s unidirectionalmover.py randommover.py`. This runs a game between the two scripts and logs the moves to `log.txt`. The winner will be shown in the terminal.
 
 Now run `snakerunner show`. This loads `log.txt` and replays the game visually in the terminal.
+
+### Run a match
+Run `snakerunner match -s unidirectionalmover.py randommover.py -n 100`. The winner will be shown in the terminal. Look in `summary.txt` to see how many games each player won.
 
 ## Rules of Snake on a Torus
 The game is played on a grid, however, moving over an edge of the grid makes the head of the snake appear on the opposite side. Unlike the classic game of snake, the snake does not stay a fixed length, but rather keeps growing, leaving its tail in place. If you move onto another snake, you die. Dead snakes remain in the playing field, and hitting them is still fatal. Your goal is to stay alive the longest, by trapping your opponents and avoiding getting trapped yourself. The last remaining player wins. 
