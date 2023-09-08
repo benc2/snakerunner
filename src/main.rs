@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::fs::File;
+use std::path::Path;
 // use std::fmt::write;
 use anyhow::Result;
 use std::io::{BufRead, BufReader, LineWriter, Write};
@@ -27,13 +28,19 @@ enum Message {
 }
 
 fn make_process_python(program_name: &str) -> Child {
-    let python_command = "python3";
-    #[cfg(target_os = "windows")]
-    let python_command = "python";
+    let python_command = if cfg!(windows) { "python" } else { "python3" };
 
+    let path = Path::new(program_name);
+    let mut dir = path.parent().unwrap_or(Path::new("./"));
+    if dir == Path::new("") {
+        // if no parent directory
+        dir = Path::new("./");
+    }
+    let filename = path.file_name().unwrap();
     Command::new(python_command)
+        .current_dir(dir)
         .arg("-m")
-        .arg(program_name)
+        .arg(filename)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -66,7 +73,7 @@ fn write_to_player(
     message: &str,
     player: usize,
     stdin: &mut ChildStdin,
-    sender: &mpsc::Sender<usize>,
+    _sender: &mpsc::Sender<usize>,
     alive_players: &mut HashSet<usize>,
     verbose: bool,
 ) {
@@ -136,7 +143,7 @@ fn play_game(
         .collect();
 
     let (read_sender, read_receiver) = mpsc::channel();
-    let (write_sender, write_receiver) = mpsc::channel(); // for now just used to kill child scripts
+    let (write_sender, _write_receiver) = mpsc::channel(); // for now just used to kill child scripts
 
     thread::spawn(move || {
         use Message::*;
@@ -256,6 +263,7 @@ fn play_game(
         .send(Message::SendHeader(game.setup_string()))
         .unwrap();
 
+    let mut first_loop = true;
     'mainloop: loop {
         if verbose {
             println!("\nRemaining players: {:?}", alive_players);
@@ -279,7 +287,8 @@ fn play_game(
             }
             read_sender.send(Message::AskMove(player)).unwrap();
             listener_sender.send(player).unwrap();
-            let line = match readline_receiver.recv_timeout(Duration::from_millis(100)) {
+            let timeout_time = if first_loop { 1000 } else { 100 };
+            let line = match readline_receiver.recv_timeout(Duration::from_millis(timeout_time)) {
                 Ok(line) => line,
                 Err(_) => {
                     kill_player(player, &read_sender, &mut alive_players);
@@ -324,6 +333,7 @@ fn play_game(
             if verbose {
                 println!("{}", game);
             }
+            first_loop = false;
         }
     }
     // println!("{:?}", kill_list);
