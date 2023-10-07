@@ -1,5 +1,4 @@
 use std::{collections::HashSet, io, str::FromStr};
-// use anyhow; // if you want proper error handling, you can do it yourself. I don't get paid for this shit
 
 // struct to keep track of the game
 pub struct TorusSnakeGame {
