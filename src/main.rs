@@ -103,6 +103,7 @@ fn play_game(
     height: usize,
     log_filename: Option<&str>,
     verbose: bool,
+    time_limit: u64,
 ) -> Option<usize> {
     let logfile = log_filename.map(|filename| File::create(filename).unwrap());
     let mut writer = logfile.map(LineWriter::new);
@@ -287,7 +288,11 @@ fn play_game(
             }
             read_sender.send(Message::AskMove(player)).unwrap();
             listener_sender.send(player).unwrap();
-            let timeout_time = if first_loop { 1000 } else { 100 };
+            let timeout_time = if first_loop {
+                10 * time_limit
+            } else {
+                time_limit
+            };
             let line = match readline_receiver.recv_timeout(Duration::from_millis(timeout_time)) {
                 Ok(line) => line,
                 Err(_) => {
@@ -372,6 +377,7 @@ fn play_match(
     height: usize,
     log_filename: &str,
     n_games: usize,
+    time_limit: u64,
 ) -> usize {
     let mut logwriter = LineWriter::new(File::create(log_filename).unwrap());
     let mut wins = vec![0; scripts.len()];
@@ -386,7 +392,15 @@ fn play_match(
             .map(|(n, script)| (n, *script))
             .unzip();
 
-        if let Some(winner) = play_game(&shuffled_scripts, None, width, height, None, false) {
+        if let Some(winner) = play_game(
+            &shuffled_scripts,
+            None,
+            width,
+            height,
+            None,
+            false,
+            time_limit,
+        ) {
             wins[shuffled_players[winner]] += 1;
         }
     }
@@ -420,7 +434,15 @@ fn play_match(
             .map(|(n, script)| (n, *script))
             .unzip();
 
-        if let Some(winner) = play_game(&shuffled_scripts, None, width, height, None, false) {
+        if let Some(winner) = play_game(
+            &shuffled_scripts,
+            None,
+            width,
+            height,
+            None,
+            false,
+            time_limit,
+        ) {
             wins[shuffled_players[winner]] += 1;
             log_summary(&mut logwriter, wins).unwrap();
             return shuffled_players[winner];
@@ -472,6 +494,10 @@ struct RunArgs {
     /// Name of the output file to which the moves are logged [default: log.txt]
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Time limit for each move in milliseconds. First move gets 10x more time to allow for some setup.
+    #[arg(short, long, default_value_t = 100)]
+    timelimit: u64,
 }
 
 #[derive(Args)]
@@ -506,6 +532,10 @@ struct MatchArgs {
     /// Name of the output file to which the moves are logged [default: summary.txt]
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Time limit for each move in milliseconds. First move gets 10x more time to allow for some setup.
+    #[arg(short, long, default_value_t = 100)]
+    timelimit: u64,
 }
 
 fn main() {
@@ -544,6 +574,7 @@ fn main() {
                 runargs.height,
                 Some(&runargs.output.unwrap_or("log.txt".into())),
                 runargs.verbose,
+                runargs.timelimit,
             ) {
                 println!("Player {winner} won!");
             } else {
@@ -566,6 +597,7 @@ fn main() {
                 matchargs.height,
                 &matchargs.output.unwrap_or("summary.txt".to_owned()),
                 matchargs.n_games,
+                matchargs.timelimit,
             );
             println!("Player {winner} won the match!");
         }
