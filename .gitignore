@@ -8,3 +8,4 @@ build.sh
 debugbuild.sh
 /scripts
 /localfiles
+mylog.txt

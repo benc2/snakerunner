@@ -96,6 +96,23 @@ fn log(message: &str, writer_opt: &mut Option<LineWriter<File>>) -> Result<(), s
     }
 }
 
+fn random_starting_positions(width: usize, height: usize, n_players: usize) -> Vec<(usize, usize)> {
+    let mut starting_positions = Vec::new();
+    let x_sampler = Uniform::new(0, width);
+    let y_sampler = Uniform::new(0, height);
+    while starting_positions.len() < n_players {
+        // TODO if n_players too high, this loop can run forever
+        let start_pos = (
+            x_sampler.sample(&mut rand::thread_rng()),
+            y_sampler.sample(&mut rand::thread_rng()),
+        );
+        if !starting_positions.contains(&start_pos) {
+            starting_positions.push(start_pos);
+        }
+    }
+    starting_positions
+}
+
 fn play_game(
     scripts: &Vec<&str>,
     starting_config: Option<Vec<(usize, usize)>>,
@@ -106,26 +123,12 @@ fn play_game(
     time_limit: u64,
 ) -> Option<usize> {
     let logfile = log_filename.map(|filename| File::create(filename).unwrap());
-    let mut writer = logfile.map(LineWriter::new);
+    let writer = logfile.map(LineWriter::new);
 
     let n_players = scripts.len();
 
-    let starting_positions = starting_config.unwrap_or_else(|| {
-        let mut starting_positions = Vec::new();
-        let x_sampler = Uniform::new(0, width);
-        let y_sampler = Uniform::new(0, height);
-        while starting_positions.len() < n_players {
-            // TODO if n_players too high, this loop can run forever
-            let start_pos = (
-                x_sampler.sample(&mut rand::thread_rng()),
-                y_sampler.sample(&mut rand::thread_rng()),
-            );
-            if !starting_positions.contains(&start_pos) {
-                starting_positions.push(start_pos);
-            }
-        }
-        starting_positions
-    });
+    let starting_positions =
+        starting_config.unwrap_or_else(|| random_starting_positions(width, height, n_players));
 
     let mut game = TorusSnakeGame::new(width, height, starting_positions);
 
@@ -133,7 +136,7 @@ fn play_game(
         .into_iter()
         .map(|script_name| make_process(script_name.as_ref()))
         .collect();
-    let mut stdins: Vec<_> = children
+    let stdins: Vec<_> = children
         .iter_mut()
         .map(|child| child.stdin.take().expect("Child has no stdin"))
         .collect();
@@ -146,111 +149,31 @@ fn play_game(
     let (read_sender, read_receiver) = mpsc::channel();
     let (write_sender, _write_receiver) = mpsc::channel(); // for now just used to kill child scripts
 
+    // thread for writing IO
     thread::spawn(move || {
-        use Message::*;
-
-        let mut alive_players: HashSet<usize> = (0..n_players).collect();
-        for message in read_receiver.iter() {
-            match message {
-                CommunicateMove { direction, player } => {
-                    log(&format!("{player}:{direction}"), &mut writer).unwrap();
-
-                    for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
-                        if opponent_player == player || !alive_players.contains(&opponent_player) {
-                            continue;
-                        }
-
-                        write_to_player(
-                            &format!("{}:{}", player, direction),
-                            opponent_player,
-                            stdin,
-                            &write_sender,
-                            &mut alive_players,
-                            verbose,
-                        );
-                        // println!("->p{opponent_player}  \"{}:{}\"", player, direction);
-                    }
-                }
-
-                AskMove(player) => {
-                    // stdins[player]
-                    //     .write_all(b"move\n")
-                    //     .expect("Asking for move failed");
-                    write_to_player(
-                        "move",
-                        player,
-                        &mut stdins[player],
-                        &write_sender,
-                        &mut alive_players,
-                        verbose,
-                    );
-                    // println!("->p{player}  \"move\"");
-                }
-
-                Kill(player) => {
-                    // println!("Gotta kill {player}");
-                    // writer.write_fmt(format_args!("out:{player}\n")).unwrap(); // TODO: fix parsing in showgame.rs to support this
-                    alive_players.remove(&player);
-                    // stdins[player].write_all(b"dead\n").expect("Kill failed");
-                    write_to_player(
-                        "stop",
-                        player,
-                        &mut stdins[player],
-                        &write_sender,
-                        &mut alive_players,
-                        verbose,
-                    );
-                    // println!("->p{player}  \"stop\"");
-
-                    for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
-                        if opponent_player == player || !alive_players.contains(&opponent_player) {
-                            continue;
-                        }
-
-                        write_to_player(
-                            &format!("out:{}", player),
-                            opponent_player,
-                            stdin,
-                            &write_sender,
-                            &mut alive_players,
-                            verbose,
-                        );
-                        // println!("->p{opponent_player}  \"out:{}\"", player);
-                    }
-                }
-
-                SendHeader(header) => {
-                    for (player, stdin) in stdins.iter_mut().enumerate() {
-                        // stdin
-                        //     .write_all(format!("{header}\n{player}\n").as_bytes())
-                        //     .expect("Writing header failed");
-                        write_to_player(
-                            &format!("{header}\n{player}"),
-                            player,
-                            stdin,
-                            &write_sender,
-                            &mut alive_players,
-                            verbose,
-                        );
-                        // println!("->p{player} \"{header}\n{player}\"");
-                    }
-                    // writer.write_fmt(format_args!("{header}\n")).unwrap();
-                    log(&header, &mut writer).unwrap();
-                }
-            }
-
-            // thread::sleep(Duration::from_millis(50));
-        }
+        writing_process(
+            n_players,
+            read_receiver,
+            writer,
+            stdins,
+            write_sender,
+            verbose,
+        );
     });
 
     let (listener_sender, listener_receiver) = mpsc::channel(); // determines which child the thread will try to read from
     let (readline_sender, readline_receiver) = mpsc::channel();
+
+    // thread for reading from IO
     thread::spawn(move || {
         for player in listener_receiver {
+            // receives which player to read from
             let mut buffer = String::new();
             let reader: &mut BufReader<ChildStdout> = &mut readers[player]; // why do we need type annotation?
             let _ = reader.read_line(&mut buffer); //error handling? If it fails, it's probably players fault, so just return the empty buffer and let outer loop kill them
-            readline_sender.send(buffer).unwrap();
+            let _ = readline_sender.send(buffer); // this appears to only fail when player times out
+                                                  // apparently it still sends its output (even though the process is explicitly killed) but function has quit
+                                                  // so channel is closed. Maybe .kill() is slow?
         }
     });
 
@@ -270,12 +193,8 @@ fn play_game(
             println!("\nRemaining players: {:?}", alive_players);
         }
         for player in 0..n_players {
-            // for player in write_receiver.iter() {
-            //     // usually a broken player will still give an empty string in read_line, but do this just to be sure
-            //     alive_players.remove(&player);
-            //     // let _ = children[player].kill();
-            // }
             if alive_players.len() < 2 {
+                // condition to end the game
                 // need to check here, since game can end after any move
                 if verbose {
                     println!("done");
@@ -284,8 +203,10 @@ fn play_game(
             }
 
             if !alive_players.contains(&player) {
+                // skip dead players
                 continue;
             }
+
             read_sender.send(Message::AskMove(player)).unwrap();
             listener_sender.send(player).unwrap();
             let timeout_time = if first_loop {
@@ -293,11 +214,14 @@ fn play_game(
             } else {
                 time_limit
             };
+
+            // receive read messages from reading thread
             let line = match readline_receiver.recv_timeout(Duration::from_millis(timeout_time)) {
                 Ok(line) => line,
                 Err(_) => {
                     kill_player(player, &read_sender, &mut alive_players);
                     let _ = children[player].kill(); // TODO: maybe remove if we have a good plan for when to kill processes
+                    println!("Timeout {}", player);
                     if verbose {
                         println!("Killing player {player} due to timeout");
                     }
@@ -325,7 +249,7 @@ fn play_game(
                 Err(_) => {
                     // invalid move input from player
                     if verbose {
-                        println!("Killing player {player} due to invalid move");
+                        println!("Killing player {player} due to invalid input");
                     }
                     kill_player(player, &read_sender, &mut alive_players);
                 }
@@ -351,6 +275,95 @@ fn play_game(
         }
     }
     None
+}
+
+fn writing_process(
+    n_players: usize,
+    read_receiver: mpsc::Receiver<Message>,
+    mut writer: Option<LineWriter<File>>,
+    mut stdins: Vec<ChildStdin>,
+    write_sender: Sender<usize>,
+    verbose: bool,
+) {
+    use Message as M;
+
+    let mut alive_players: HashSet<usize> = (0..n_players).collect();
+    for message in read_receiver.iter() {
+        match message {
+            M::CommunicateMove { direction, player } => {
+                log(&format!("{player}:{direction}"), &mut writer).unwrap();
+
+                for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
+                    if opponent_player == player || !alive_players.contains(&opponent_player) {
+                        continue;
+                    }
+
+                    write_to_player(
+                        &format!("{}:{}", player, direction),
+                        opponent_player,
+                        stdin,
+                        &write_sender,
+                        &mut alive_players,
+                        verbose,
+                    );
+                }
+            }
+
+            M::AskMove(player) => {
+                write_to_player(
+                    "move",
+                    player,
+                    &mut stdins[player],
+                    &write_sender,
+                    &mut alive_players,
+                    verbose,
+                );
+            }
+
+            M::Kill(player) => {
+                alive_players.remove(&player);
+                write_to_player(
+                    "stop",
+                    player,
+                    &mut stdins[player],
+                    &write_sender,
+                    &mut alive_players,
+                    verbose,
+                );
+
+                // communicate death of player to others
+                for (opponent_player, stdin) in stdins.iter_mut().enumerate() {
+                    if opponent_player == player || !alive_players.contains(&opponent_player) {
+                        // skip killed player
+                        continue;
+                    }
+
+                    write_to_player(
+                        &format!("out:{}", player),
+                        opponent_player,
+                        stdin,
+                        &write_sender,
+                        &mut alive_players,
+                        verbose,
+                    );
+                }
+            }
+
+            M::SendHeader(header) => {
+                for (player, stdin) in stdins.iter_mut().enumerate() {
+                    write_to_player(
+                        &format!("{header}\n{player}"),
+                        player,
+                        stdin,
+                        &write_sender,
+                        &mut alive_players,
+                        verbose,
+                    );
+                }
+                log(&header, &mut writer).unwrap();
+            }
+        }
+    }
 }
 
 fn log_summary(writer: &mut LineWriter<File>, wins: Vec<i32>) -> Result<(), std::io::Error> {
@@ -385,7 +398,8 @@ fn play_match(
 
     let mut shuffled_players: Vec<usize>;
     let mut shuffled_scripts: Vec<&str>;
-    for _ in 0..n_games {
+    for gameno in 0..n_games {
+        println!("{}", gameno); // TODO remove
         tagged_scripts.shuffle(&mut thread_rng());
         (shuffled_players, shuffled_scripts) = tagged_scripts
             .iter()
@@ -402,6 +416,9 @@ fn play_match(
             time_limit,
         ) {
             wins[shuffled_players[winner]] += 1;
+            println!("Game done {winner}")
+        } else {
+            println!("Game failed, no winner")
         }
     }
 

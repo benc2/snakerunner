@@ -14,7 +14,7 @@ Run `./snakerunner run -s unidirectionalmover.py randommover.py`. This runs a ga
 Now run `./snakerunner show`. This loads `log.txt` and replays the game visually in the terminal.
 
 ### Run a match
-Run `./snakerunner match -s unidirectionalmover.py randommover.py -n 100`. The winner will be shown in the terminal. Look in `summary.txt` to see how many games each player won.
+Run `./snakerunner match -s unidirectionalmover.py randommover.py -n 25`. The winner will be shown in the terminal. Look in `summary.txt` to see how many games each player won.
 
 ## Rules of Snake on a Torus
 The game is played on a grid, however, moving over an edge of the grid makes the head of the snake appear on the opposite side. Unlike the classic game of snake, the snake does not stay a fixed length, but rather keeps growing, leaving its tail in place. If you move onto another snake, you die. Dead snakes remain in the playing field, and hitting them is still fatal. Your goal is to stay alive the longest, by trapping your opponents and avoiding getting trapped yourself. The last remaining player wins. 
@@ -41,7 +41,7 @@ If you want to write your own script to play snake, it needs to communicate with
 ```
 
 ### Game inputs
-- `move`: instruction to respond with a move (`N`, `S`,`E` or `W`). Make sure your response ends with a newline. [Currently, timeout is 100ms]
+- `move`: instruction to respond with a move (`N`, `S`,`E` or `W`). Make sure your response ends with a newline. [Currently, timeout is 100ms by default]
 - `stop`: instruction stop your program. 
 - `{player}:{direction}`: (e.g. `0:N`) indicates move made by player. Your own moves are not sent back to you.
 - `out:{player}`: player is out of the game.

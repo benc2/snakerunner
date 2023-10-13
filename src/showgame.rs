@@ -50,17 +50,29 @@ pub fn showgame(logfile: &str, timestep: u64) -> Result<()> {
         .collect();
 
     let mut game = TorusSnakeGame::new(width, height, starting_positions);
+    let mut input_buffer = String::new(); // only for dumping input into when going in step mode
+    let mut move_nr = 0;
+    let mut turn_nr = 0;
 
     for line_result in lines {
+        move_nr += 1;
+        if move_nr % (n_players as i32) == 1 {
+            turn_nr += 1
+        }
         let Ok(line) = line_result else{continue;};
         use Instruction::*;
         match line.parse::<Instruction>()? {
             Move { player, direction } => {
                 game.move_player(player, direction);
 
-                println!("\n{player}:{direction}");
+                println!("\nTurn {turn_nr}: {player}:{direction}"); // works because turn_nr is increasing, otherwise would have to clear
                 println!("{}", game);
-                std::thread::sleep(Duration::from_millis(timestep));
+                if timestep <= 0 {
+                    std::io::stdin().read_line(&mut input_buffer).unwrap();
+                    print!("{}", term_cursor::Up(1));
+                } else {
+                    std::thread::sleep(Duration::from_millis(timestep));
+                }
                 // clear_lines(n_players + 1);
                 print!("{}", term_cursor::Up(height as i32 + 4)); // move cursor up to overwrite previous board
                                                                   // print!("{}\r", "\x1B[F".to_owned().repeat(height + 4))
