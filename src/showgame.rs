@@ -1,21 +1,12 @@
-use crate::Direction;
-use crate::TorusSnakeGame;
+use crate::game::TorusSnakeGame;
 // use anyhow::Error;
 use anyhow::Result;
 // use std::fmt::Result;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 // use std::path::Path;
-use crate::parse_instruction::Instruction;
+use crate::parse_instruction::{Instruction, ParseError};
 use std::time::Duration;
-
-#[derive(Debug, PartialEq, thiserror::Error)]
-enum ParseError {
-    #[error("Wrong amount of arguments")]
-    ArgNoErr,
-    // #[error("Invalid move")]
-    // MoveErr,
-}
 
 pub fn parse_usize_pair(input: &str) -> Result<(usize, usize)> {
     let parsed_args: Vec<usize> = input
@@ -28,13 +19,6 @@ pub fn parse_usize_pair(input: &str) -> Result<(usize, usize)> {
         // args may actually be correct, but the number of successfully parsed args is not
     };
     Ok((x, y))
-}
-
-pub fn parse_player_move(input: &str) -> Result<(usize, Direction)> {
-    let mut args = input.split(":");
-    let player: usize = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
-    let direction: Direction = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
-    Ok((player, direction))
 }
 
 pub fn showgame(logfile: &str, timestep: u64) -> Result<()> {

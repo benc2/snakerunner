@@ -1,7 +1,8 @@
+use anyhow::Result;
 use std::str::FromStr;
 
-use crate::showgame::parse_player_move;
-use crate::Direction;
+// use crate::showgame::parse_player_move;
+use crate::game::Direction;
 
 #[derive(Debug, PartialEq)]
 pub enum Instruction {
@@ -36,6 +37,22 @@ impl FromStr for Instruction {
             }
         }
     }
+}
+
+#[derive(Debug, PartialEq, thiserror::Error)]
+pub enum ParseError {
+    // TODO what to do with the different parsing errors?
+    #[error("Wrong amount of arguments")]
+    ArgNoErr,
+    // #[error("Invalid move")]
+    // MoveErr,
+}
+
+pub fn parse_player_move(input: &str) -> Result<(usize, Direction)> {
+    let mut args = input.split(":");
+    let player: usize = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
+    let direction: Direction = args.next().ok_or(ParseError::ArgNoErr)?.parse()?;
+    Ok((player, direction))
 }
 
 #[cfg(test)]
